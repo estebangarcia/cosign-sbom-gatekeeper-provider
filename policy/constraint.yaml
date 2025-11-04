@@ -1,0 +1,31 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sSBOMValidation
+metadata:
+  name: block-vulnerable-packages
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+  parameters:
+    provider: sbom-provider
+    # Certificate identity (subject) to verify - e.g., email, SPIFFE ID, etc.
+    certIdentity: ""
+    # OIDC issuer URL to verify
+    certOidcIssuer: "https://github.com/login/oauth"
+    # Example: Block specific vulnerable packages
+    prohibitedPackages:
+      - name: "log4j-core"
+        version: "2.14.1"  # Vulnerable version
+      - name: "spring-core"
+        version: "5.2.0"   # Vulnerable version
+    #prohibitedLicenses:
+    #  - "GPL-3.0"
+    #  - "AGPL-3.0"
+    # Example: Only allow certain licenses (uncomment to use)
+    #requiredLicenses:
+    #  - "Apache-2.0"
+    #  - "MIT"
+    #  - "BSD"

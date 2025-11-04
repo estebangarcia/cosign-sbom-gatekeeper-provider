@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gatekeeper-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sbom-provider
+  namespace: gatekeeper-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sbom-provider
+  namespace: gatekeeper-system
+  labels:
+    app: sbom-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sbom-provider
+  template:
+    metadata:
+      labels:
+        app: sbom-provider
+    spec:
+      serviceAccountName: sbom-provider
+      imagePullSecrets:
+        - name: my-secret
+      containers:
+      - name: provider
+        # You need to build the image yourself
+        image: cosign-sbom-gatekeeper-provider:v0.0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8090
+          name: https
+        env:
+        - name: PORT
+          value: "8090"
+        - name: TIMEOUT
+          value: "30s"
+        - name: TLS_CERT
+          value: /certs/tls.crt
+        - name: TLS_KEY
+          value: /certs/tls.key
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: USE_REFERRERS_API
+          value: "true"
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: certs
+          mountPath: /certs
+          readOnly: true
+      volumes:
+      - name: certs
+        secret:
+          secretName: sbom-provider-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sbom-provider
+  namespace: gatekeeper-system
+  labels:
+    app: sbom-provider
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8090
+    targetPort: 8090
+    protocol: TCP
+    name: https
+  selector:
+    app: sbom-provider

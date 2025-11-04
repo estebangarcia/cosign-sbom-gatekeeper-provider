@@ -1,0 +1,20 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sSBOMValidation
+metadata:
+  name: require-approved-licenses
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+  parameters:
+    provider: sbom-provider
+    # Only allow specific open source licenses
+    requiredLicenses:
+      - "Apache-2.0"
+      - "MIT"
+      - "BSD-2-Clause"
+      - "BSD-3-Clause"
+      - "ISC"

@@ -1,0 +1,292 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8ssbomvalidation
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sSBOMValidation
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            provider:
+              type: string
+              description: "Name of the external data provider"
+            certIdentity:
+              type: string
+              description: "Certificate identity (subject) to verify (e.g., user@example.com)"
+            certOidcIssuer:
+              type: string
+              description: "OIDC issuer URL to verify (e.g., https://github.com/login/oauth)"
+            prohibitedPackages:
+              type: array
+              description: "List of prohibited packages"
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  version:
+                    type: string
+            requiredLicenses:
+              type: array
+              description: "List of allowed license types"
+              items:
+                type: string
+            prohibitedLicenses:
+              type: array
+              description: "List of prohibited license types"
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8ssbomvalidation
+
+        violation[{"msg": msg}] {
+          # Get container images
+          container := input_containers[_]
+          image := container.image
+
+          # Build key with image and imagePullSecrets
+          key := build_key(image)
+
+          # Query SBOM from external provider
+          provider := object.get(input.parameters, "provider", "sbom-provider")
+          response := external_data({"provider": provider, "keys": [key]})
+
+          # Check if the response is empty or the key is missing
+          count(response) == 0
+          msg := sprintf("Failed to verify attestation or retrieve SBOM for image: %v (no response)", [image])
+        }
+
+        violation[{"msg": msg}] {
+          # Get container images
+          container := input_containers[_]
+          image := container.image
+
+          # Build key with image and imagePullSecrets
+          key := build_key(image)
+
+          # Query SBOM from external provider
+          provider := object.get(input.parameters, "provider", "sbom-provider")
+          response := external_data({"provider": provider, "keys": [key]})
+
+          # Get responses array (it's an array of [key, value] pairs)
+          responses_array := object.get(response, "responses", [])
+
+          # Check if SBOM data is missing - need to find our key in the array
+          not has_response_for_key(responses_array, key)
+
+          msg := sprintf("Failed to verify attestation or retrieve SBOM for image: %v", [image])
+        }
+
+        # Helper to check if a key exists in the responses array
+        has_response_for_key(responses_array, key) {
+          responses_array[_][0] == key
+        }
+
+        violation[{"msg": msg}] {
+          # Get container images
+          container := input_containers[_]
+          image := container.image
+
+          # Build key with image and imagePullSecrets
+          key := build_key(image)
+
+          # Query SBOM from external provider
+          provider := object.get(input.parameters, "provider", "sbom-provider")
+          response := external_data({"provider": provider, "keys": [key]})
+
+          # Get SBOM data from responses array
+          responses_array := object.get(response, "responses", [])
+          sbom_data := get_response_value(responses_array, key)
+
+          # Parse SBOM data
+          sbom := json.unmarshal(sbom_data)
+
+          # Check for prohibited packages
+          count(input.parameters.prohibitedPackages) > 0
+          prohibited := input.parameters.prohibitedPackages[_]
+          pkg := sbom.packages[_]
+
+          pkg.name == prohibited.name
+          check_version_match(pkg.versionInfo, prohibited.version)
+
+          msg := sprintf("Image %v contains prohibited package: %v@%v",
+            [image, pkg.name, pkg.versionInfo])
+        }
+
+        # Helper to get value for a key from responses array
+        get_response_value(responses_array, key) = value {
+          pair := responses_array[_]
+          pair[0] == key
+          value := pair[1]
+        }
+
+        violation[{"msg": msg}] {
+          # Get container images
+          container := input_containers[_]
+          image := container.image
+
+          # Build key with image and imagePullSecrets
+          key := build_key(image)
+
+          # Query SBOM from external provider
+          provider := object.get(input.parameters, "provider", "sbom-provider")
+          response := external_data({"provider": provider, "keys": [key]})
+
+          # Get SBOM data from responses array
+          responses_array := object.get(response, "responses", [])
+          sbom_data := get_response_value(responses_array, key)
+
+          # Parse SBOM data
+          sbom := json.unmarshal(sbom_data)
+
+          # Check for prohibited licenses
+          count(input.parameters.prohibitedLicenses) > 0
+          pkg := sbom.packages[_]
+          license := get_package_license(pkg)
+
+          prohibited_license := input.parameters.prohibitedLicenses[_]
+          contains(license, prohibited_license)
+
+          msg := sprintf("Image %v contains package %v with prohibited license: %v",
+            [image, pkg.name, license])
+        }
+
+        violation[{"msg": msg}] {
+          # Get container images
+          container := input_containers[_]
+          image := container.image
+
+          # Build key with image and imagePullSecrets
+          key := build_key(image)
+
+          # Query SBOM from external provider
+          provider := object.get(input.parameters, "provider", "sbom-provider")
+          response := external_data({"provider": provider, "keys": [key]})
+
+          # Get SBOM data from responses array
+          responses_array := object.get(response, "responses", [])
+          sbom_data := get_response_value(responses_array, key)
+
+          # Parse SBOM data
+          sbom := json.unmarshal(sbom_data)
+
+          # Check for required licenses (allow list)
+          count(input.parameters.requiredLicenses) > 0
+          pkg := sbom.packages[_]
+          license := get_package_license(pkg)
+
+          # License is missing or not in allowed list
+          not license_in_allowed_list(license, input.parameters.requiredLicenses)
+
+          msg := sprintf("Image %v contains package %v with disallowed or missing license: %v",
+            [image, pkg.name, license])
+        }
+
+        # Build a key that includes image reference, imagePullSecrets, and verification parameters
+        build_key(image) = key {
+          secrets := get_image_pull_secrets
+          secrets_json := json.marshal(secrets)
+          cert_identity := object.get(input.parameters, "certIdentity", "")
+          cert_oidc_issuer := object.get(input.parameters, "certOidcIssuer", "")
+
+          # Build key with format: image|secrets|identity|issuer
+          key := sprintf("%s|%s|%s|%s", [image, secrets_json, cert_identity, cert_oidc_issuer])
+        }
+
+        # Get imagePullSecrets from the pod spec
+        get_image_pull_secrets = secrets {
+          # For Pods
+          input.review.object.kind == "Pod"
+          secrets := [s.name | s := input.review.object.spec.imagePullSecrets[_]]
+        }
+
+        get_image_pull_secrets = secrets {
+          # For Deployments, StatefulSets, DaemonSets, etc.
+          input.review.object.kind != "Pod"
+          secrets := [s.name | s := input.review.object.spec.template.spec.imagePullSecrets[_]]
+        }
+
+        get_image_pull_secrets = [] {
+          # Default to empty array if no imagePullSecrets found
+          input.review.object.kind == "Pod"
+          not input.review.object.spec.imagePullSecrets
+        }
+
+        get_image_pull_secrets = [] {
+          # Default to empty array if no imagePullSecrets found
+          input.review.object.kind != "Pod"
+          not input.review.object.spec.template.spec.imagePullSecrets
+        }
+
+        # Helper functions
+        input_containers[container] {
+          # For Pods
+          input.review.object.kind == "Pod"
+          container := input.review.object.spec.containers[_]
+        }
+
+        input_containers[container] {
+          # For Pods - init containers
+          input.review.object.kind == "Pod"
+          container := input.review.object.spec.initContainers[_]
+        }
+
+        input_containers[container] {
+          # For Pods - ephemeral containers
+          input.review.object.kind == "Pod"
+          container := input.review.object.spec.ephemeralContainers[_]
+        }
+
+        input_containers[container] {
+          # For Deployments, StatefulSets, DaemonSets, etc.
+          input.review.object.kind != "Pod"
+          container := input.review.object.spec.template.spec.containers[_]
+        }
+
+        input_containers[container] {
+          # For Deployments, StatefulSets, DaemonSets, etc. - init containers
+          input.review.object.kind != "Pod"
+          container := input.review.object.spec.template.spec.initContainers[_]
+        }
+
+        input_containers[container] {
+          # For Deployments, StatefulSets, DaemonSets, etc. - ephemeral containers
+          input.review.object.kind != "Pod"
+          container := input.review.object.spec.template.spec.ephemeralContainers[_]
+        }
+
+        check_version_match(actual, expected) {
+          expected == "*"
+        }
+
+        check_version_match(actual, expected) {
+          actual == expected
+        }
+
+        get_package_license(pkg) = license {
+          license := object.get(pkg, "licenseConcluded", "")
+        }
+
+        get_package_license(pkg) = license {
+          not pkg.licenseConcluded
+          license := object.get(pkg, "licenseDeclared", "")
+        }
+
+        license_allowed(license, allowed_licenses) {
+          allowed := allowed_licenses[_]
+          contains(license, allowed)
+        }
+
+        # Check if license is in the allowed list (empty/missing licenses are NOT allowed)
+        license_in_allowed_list(license, allowed_licenses) {
+          license != ""
+          license != "NOASSERTION"
+          license != "NONE"
+          license_allowed(license, allowed_licenses)
+        }
