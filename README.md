@@ -354,15 +354,15 @@ violation[{"msg": msg}] {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Kubernetes API Server                     │
+│                    Kubernetes API Server                    │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          │ Admission Request
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Gatekeeper Webhook                         │
+│                   Gatekeeper Webhook                        │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │             Rego Policy Evaluation                     │  │
+│  │             Rego Policy Evaluation                    │  │
 │  │  - Check SBOM via external_data()                     │  │
 │  │  - Evaluate package/license rules                     │  │
 │  └─────────────────────┬─────────────────────────────────┘  │
@@ -371,12 +371,12 @@ violation[{"msg": msg}] {
                          │ (image|secrets|identity|issuer)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    SBOM Provider                             │
+│                    SBOM Provider                            │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │  1. Parse request key                                  │  │
+│  │  1. Parse request key                                 │  │
 │  │  2. Create keychain from pod's imagePullSecrets       │  │
-│  │  3. Fetch attestations (OCI 1.1 / legacy)            │  │
-│  │  4. Verify with Sigstore (Fulcio + Rekor)            │  │
+│  │  3. Fetch attestations (OCI 1.1 / legacy)             │  │
+│  │  4. Verify with Sigstore (Fulcio + Rekor)             │  │
 │  │  5. Extract & normalize SBOM                          │  │
 │  │  6. Return unified package data                       │  │
 │  └───────────────────────────────────────────────────────┘  │
